@@ -1,0 +1,7 @@
+- Next.js App Router in `src/app`, TypeScript strict, Tailwind for styles. Server components by default; `"use client"` only where a component needs state or events.
+- API routes are route handlers in `src/app/api/**/route.ts`. They validate input with zod and answer JSON. Errors are `{ "error": "message" }` with a fitting status code.
+- The database is PostgreSQL through Drizzle: tables in `src/db/schema.ts`, the client from `@/db`. Rules belong in the schema: `notNull`, foreign keys, unique indexes, checks. `npm run db:migrate` applies the schema.
+- No new dependencies unless the task says so. Use `node:crypto` (scrypt, randomBytes) for passwords and tokens.
+- Tests use Vitest, live next to the code as `*.test.ts`, and call route handlers directly with a `Request`. They use the real database and clean up the rows they create.
+- Before you stop, run `npm run typecheck`, `npm run lint` and `npm test`. The build must pass too.
+- No placeholder code, no TODO comments, no unused exports.

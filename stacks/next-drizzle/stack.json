@@ -1,0 +1,35 @@
+{
+  "name": "next-drizzle",
+  "setup": "setup.sh",
+  "start": "if docker info >/dev/null 2>&1; then docker compose -p \"kapelo-$KAPELO_APP\" up -d --wait; fi",
+  "rules": "rules.md",
+  "test_globs": ["**/*.test.ts", "**/*.test.tsx", "e2e/**"],
+  "always_allowed": ["package.json", "package-lock.json"],
+  "line_exts": [".ts", ".tsx", ".css", ".sql"],
+  "prepare": [
+    { "name": "install", "cmd": "test -d node_modules || npm ci --no-audit --no-fund", "timeout_minutes": 10 }
+  ],
+  "database": "postgres",
+  "gates": {
+    "test": [
+      { "name": "lint", "cmd": "npx eslint --max-warnings 0 $(git diff --name-only main...HEAD -- '*.ts' '*.tsx' | tr '\\n' ' ') </dev/null" }
+    ],
+    "impl": [
+      { "name": "build", "cmd": "npm run build", "timeout_minutes": 10 },
+      { "name": "typecheck", "cmd": "npm run typecheck" },
+      { "name": "lint", "cmd": "npm run lint -- --max-warnings 0" },
+      { "name": "migrate", "cmd": "npm run db:migrate" },
+      { "name": "test", "cmd": "npm test", "timeout_minutes": 10 }
+    ]
+  },
+  "final": [
+    { "name": "build", "cmd": "npm run build", "timeout_minutes": 10 },
+    { "name": "typecheck", "cmd": "npm run typecheck" },
+    { "name": "lint", "cmd": "npm run lint -- --max-warnings 0" },
+    { "name": "migrate", "cmd": "npm run db:migrate" },
+    { "name": "test", "cmd": "npm test", "timeout_minutes": 15 },
+    { "name": "dead-code", "cmd": "npx --yes knip --no-progress" },
+    { "name": "duplicates", "cmd": "npx --yes jscpd src --min-tokens 70 --threshold 3 --silent --exit-code 1" },
+    { "name": "security", "cmd": "npm audit --omit=dev --audit-level=high" }
+  ]
+}
