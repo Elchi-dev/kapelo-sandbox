@@ -91,22 +91,32 @@ func Enroll(ctx context.Context, c *Config, token, caFile, version string) (stri
 }
 
 // memoryMB is the container's memory limit, or the machine's memory.
+// memoryMB is the container's memory limit (cgroup v2 or v1), or the
+// machine's memory when there is none or it is larger.
 func memoryMB() int {
-	if b, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
-		if n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil {
-			return int(n >> 20)
-		}
-	}
+	total := 0
 	if b, err := os.ReadFile("/proc/meminfo"); err == nil {
 		for _, l := range strings.Split(string(b), "\n") {
 			if f := strings.Fields(l); len(f) >= 2 && f[0] == "MemTotal:" {
 				if kb, err := strconv.Atoi(f[1]); err == nil {
-					return kb >> 10
+					total = kb >> 10
 				}
 			}
 		}
 	}
-	return 0
+	for _, f := range []string{"/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		if n, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64); err == nil {
+			if limit := int(n >> 20); total == 0 || limit < total {
+				return limit
+			}
+		}
+		break
+	}
+	return total
 }
 
 func diskGB(dir string) int {
