@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Elchi-dev/kapelo-worker/provider"
+	"github.com/Elchi-dev/kapelo-sandbox/provider"
 )
 
 func TestConfig(t *testing.T) {

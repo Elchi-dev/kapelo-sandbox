@@ -1,7 +1,7 @@
 // Package provider is where the worker's model runs: an OpenAI compatible
 // API (OpenRouter, OpenAI, DeepSeek, Ollama, a gateway of your own) or
 // Anthropic's. Providers are kept in a small JSON file, written by
-// `kapelo-worker init`; API keys are best left in the environment and
+// `kapelo-sandbox worker init`; API keys are best left in the environment and
 // named there.
 package provider
 
@@ -149,7 +149,7 @@ func (c Config) Get(name string) (string, Provider, error) {
 		name = c.Default
 	}
 	if name == "" {
-		return "", Provider{}, errors.New("no provider is set up; run kapelo-worker init")
+		return "", Provider{}, errors.New("no provider is set up; run kapelo-sandbox worker init")
 	}
 	p, ok := c.Providers[name]
 	if !ok {

@@ -10,9 +10,10 @@ fi
 go vet ./...
 go test -race ./...
 
-# The worker has no dependencies outside the standard library.
-if [ -n "$(go list -deps -test -f '{{with .Module}}{{if not .Main}}{{.Path}}{{end}}{{end}}' ./... | sort -u)" ]; then
-  echo "a dependency appeared; the worker uses the standard library only"; exit 1
+# Besides the standard library, only yamux, which carries the link.
+deps=$(go list -deps -test -f '{{with .Module}}{{if not .Main}}{{.Path}}{{end}}{{end}}' ./... | sort -u)
+if [ -n "$deps" ] && [ "$deps" != "github.com/hashicorp/yamux" ]; then
+  echo "a dependency appeared:"; echo "$deps"; exit 1
 fi
 
 # House style: no em or en dashes.

@@ -1,8 +1,8 @@
 name: release
 
-# A tag v* publishes the binaries with signed checksums and the image
-# ghcr.io/elchi-dev/kapelo-worker, signed with Sigstore (keyless, by this
-# workflow's identity).
+# A tag v* publishes the binaries with signed checksums and the images
+# ghcr.io/elchi-dev/kapelo-sandbox and ghcr.io/elchi-dev/kapelo-worker,
+# signed with Sigstore (keyless, by this workflow's identity).
 
 on:
   push:
@@ -28,9 +28,9 @@ jobs:
           for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             GOOS=${t%/*} GOARCH=${t#*/} CGO_ENABLED=0 go build -trimpath \
               -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
-              -o "dist/kapelo-worker_${t%/*}_${t#*/}" ./cmd/kapelo-worker
+              -o "dist/kapelo-sandbox_${t%/*}_${t#*/}" ./cmd/kapelo-sandbox
           done
-          (cd dist && sha256sum kapelo-worker_* > SHA256SUMS)
+          (cd dist && sha256sum kapelo-sandbox_* > SHA256SUMS)
           cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -39,22 +39,41 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - name: Image
-        id: image
+      - name: Sandbox image
+        id: sandbox
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: sandbox
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: VERSION=${{ github.ref_name }}
+          tags: |
+            ghcr.io/elchi-dev/kapelo-sandbox:${{ github.ref_name }}
+            ghcr.io/elchi-dev/kapelo-sandbox:latest
+      - name: Worker image
+        id: worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: worker
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: VERSION=${{ github.ref_name }}
           tags: |
             ghcr.io/elchi-dev/kapelo-worker:${{ github.ref_name }}
             ghcr.io/elchi-dev/kapelo-worker:latest
-      - name: Sign the image
-        run: cosign sign --yes "ghcr.io/elchi-dev/kapelo-worker@${{ steps.image.outputs.digest }}"
+      - name: Sign the images
+        run: |
+          cosign sign --yes "ghcr.io/elchi-dev/kapelo-sandbox@${{ steps.sandbox.outputs.digest }}"
+          cosign sign --yes "ghcr.io/elchi-dev/kapelo-worker@${{ steps.worker.outputs.digest }}"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          echo "Image: ghcr.io/elchi-dev/kapelo-worker@${{ steps.image.outputs.digest }}" > notes.md
+          {
+            echo "Sandbox: ghcr.io/elchi-dev/kapelo-sandbox@${{ steps.sandbox.outputs.digest }}"
+            echo
+            echo "Worker: ghcr.io/elchi-dev/kapelo-worker@${{ steps.worker.outputs.digest }}"
+          } > notes.md
           gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag

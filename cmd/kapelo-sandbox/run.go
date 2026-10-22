@@ -10,12 +10,13 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Elchi-dev/kapelo-worker/gates"
-	"github.com/Elchi-dev/kapelo-worker/gitrepo"
-	"github.com/Elchi-dev/kapelo-worker/harness"
-	"github.com/Elchi-dev/kapelo-worker/provider"
-	"github.com/Elchi-dev/kapelo-worker/task"
-	"github.com/Elchi-dev/kapelo-worker/worker"
+	"github.com/Elchi-dev/kapelo-sandbox/gates"
+	"github.com/Elchi-dev/kapelo-sandbox/gitrepo"
+	"github.com/Elchi-dev/kapelo-sandbox/harness"
+	"github.com/Elchi-dev/kapelo-sandbox/pgdev"
+	"github.com/Elchi-dev/kapelo-sandbox/provider"
+	"github.com/Elchi-dev/kapelo-sandbox/task"
+	"github.com/Elchi-dev/kapelo-sandbox/worker"
 )
 
 // runCmd does one task in a repository with up to three attempts: the
@@ -32,7 +33,7 @@ func runCmd(ctx context.Context, e env, args []string) (int, error) {
 	files := fs.String("files", "", "files or patterns the task may change, comma separated (src/app/api/**,src/db/schema.ts)")
 	criteria := fs.String("criteria", "", "acceptance criteria, separated by ;")
 	notes := fs.String("notes", "", "notes for the model, separated by ;")
-	stackName := fs.String("stack", "", "stack name or folder (default next-drizzle; kapelo-worker stacks lists them)")
+	stackName := fs.String("stack", "", "stack name or folder (default next-drizzle; kapelo-sandbox worker stacks lists them)")
 	prov := fs.String("provider", "", "provider from the configuration (default: the configured default)")
 	model := fs.String("model", "", "model for the first two attempts (default: the provider's)")
 	escalate := fs.String("escalate", "", "model for the third attempt (default: the provider's escalate)")
@@ -237,7 +238,10 @@ func database(ctx context.Context, e env, stack *gates.Stack) (func(), error) {
 	if stack.Database != "postgres" || e.getenv("DATABASE_URL") != "" {
 		return func() {}, nil
 	}
-	pg, err := worker.StartPostgres(ctx, getenv(e, "KAPELO_PG_PORT", "54329"))
+	if !pgdev.Available() {
+		return nil, errors.New("the checks need PostgreSQL: install it (pg_ctl on PATH) or set DATABASE_URL")
+	}
+	pg, err := pgdev.Temporary(ctx, getenv(e, "KAPELO_PG_PORT", "54329"))
 	if err != nil {
 		return nil, err
 	}
@@ -247,4 +251,11 @@ func database(ctx context.Context, e env, stack *gates.Stack) (func(), error) {
 		return nil, err
 	}
 	return pg.Stop, nil
+}
+
+func getenv(e env, k, def string) string {
+	if v := e.getenv(k); v != "" {
+		return v
+	}
+	return def
 }

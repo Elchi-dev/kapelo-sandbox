@@ -1,100 +1,109 @@
-# kapelo-worker
+# kapelo-sandbox
 
-kapelo-worker gives one coding task to a model and checks the result before you look at it. You name the goal and the files the task may change; the worker runs [OpenCode](https://opencode.ai) with a model of your choice on a branch of its own, commits, and runs the checks: only the allowed files changed, tests left alone, and the project's own build, typecheck, lint and tests pass. When an attempt fails, it tries again with the failing check in hand, then with a stronger model.
+The Kapelo sandbox is one container on your own server or computer where [Kapelo](https://kapelo.app)'s agents work on your projects: they run commands, read and edit files, search the code, start the app and look at it, the way a developer works on a machine of their own. Kapelo itself runs in the cloud; the sandbox is the one part that runs on your hardware, which is why its code is here for you to read.
 
-It is the worker [Kapelo](https://kapelo.app) runs in its sandboxes, and it works just as well on its own: in a terminal, in CI, or behind a scheduler of your own.
+It also carries a standalone worker that gives one coding task to a model of your choice and checks the result, with no Kapelo involved.
 
-## How an attempt goes
+## Start a sandbox
 
-1. **Prepare.** The stack's prepare step runs, such as `npm ci`. What it creates stays out of the task's commit.
-2. **Work.** OpenCode gets the task card: goal, acceptance criteria, allowed files, the stack's rules, notes, and on a second try the failing check. It may edit files and run commands; it may not browse the web.
-3. **Commit.** Everything the model changed is committed on `task/<id>`.
-4. **Check.** `protected` (an implementation task does not touch tests), `scope` (only allowed files changed), `test-budget` (a test task stays within its number of tests), then the stack's checks in order. The first failure stops the rest.
-
-`run` climbs a ladder of up to three attempts: your model on a fresh branch, the same model on its own work with the failure, the stronger model on a fresh branch.
-
-## Install
-
-Binaries for Linux and macOS are on the [releases](https://github.com/Elchi-dev/kapelo-worker/releases) page, with `SHA256SUMS` signed through Sigstore:
+In Kapelo, open the sandbox settings and create a token. Then, on any machine with Docker:
 
 ```sh
-cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/Elchi-dev/kapelo-worker/' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-sha256sum -c SHA256SUMS --ignore-missing
+docker run -d --name kapelo --restart unless-stopped \
+  -v kapelo:/data -e KAPELO_TOKEN=kpe_... \
+  ghcr.io/elchi-dev/kapelo-sandbox
 ```
 
-Or with Go 1.26 or later:
+The first start enrolls with the token, which works once, and from then on the container keeps one outbound connection to Kapelo. No port is opened on your machine, and it works behind any router. Projects, the database and the tools you install live in the volume and stay across restarts and updates.
+
+`docker exec kapelo kapelo-sandbox status` shows whether it is online, its projects and what is running. `kapelo-sandbox pause` stops every running command and refuses new ones until `resume`; `docker stop kapelo` ends it altogether.
+
+## What runs in it
+
+Kapelo's agents reach the sandbox only through the connection the sandbox opened, and only with commands Kapelo signed for this sandbox, each valid for a few minutes and accepted once. What they can do:
+
+| Tool | |
+|---|---|
+| `exec` | run a shell command in a project, up to ten minutes; or start one in the background, such as a dev server, and read its output later |
+| `read`, `write`, `edit` | read a file with line numbers, write a whole file, replace an exact piece of one |
+| `glob`, `grep` | find files by pattern, search their contents |
+| preview | reach an app listening in the sandbox, for Kapelo's preview links |
+| git | Kapelo brings the project's repository in and takes commits out as bundles; the sandbox holds no git credentials |
+
+Every project is a folder in `/data/projects` and a git repository. Paths given to the tools stay inside their project; links that lead out are refused. Commands run as uid 1000 with `HOME` in the volume, and with `DATABASE_URL` pointing at a PostgreSQL the sandbox runs for the projects (`KAPELO_POSTGRES=off` turns it off). The image has Node.js 22, git, Python 3, PostgreSQL 15, ripgrep, jq and the usual build tools; anything else can be installed into the home folder.
+
+Model calls do not happen in the sandbox: the agents run in Kapelo, with your organisation's API keys, and only their tool calls come here.
+
+## How much it may do on your machine
+
+That is your choice, made with Docker's own options:
 
 ```sh
-go install github.com/Elchi-dev/kapelo-worker/cmd/kapelo-worker@latest
+docker run -d --name kapelo --restart unless-stopped \
+  --cpus 4 --memory 8g --pids-limit 2048 \
+  --runtime runsc \
+  --network kapelo-net \
+  -v kapelo:/data -e KAPELO_TOKEN=kpe_... \
+  ghcr.io/elchi-dev/kapelo-sandbox
 ```
 
-The worker needs `git` and `opencode` (`npm i -g opencode-ai`) on `PATH`, and PostgreSQL's `pg_ctl` when a stack's checks need a database and `DATABASE_URL` is not set. The image below has all of them.
+`--cpus` and `--memory` cap what the projects' builds and tests can use. `--runtime runsc` runs the container in [gVisor](https://gvisor.dev), with a kernel of its own between it and yours. A network of its own, or firewall rules for the container, decide whether it may reach your local network; it needs outbound HTTPS to Kapelo, and whatever registries your projects install from. The container does not need privileges, the Docker socket, or any folder of yours.
 
-## Choose a provider
+| Variable | |
+|---|---|
+| `KAPELO_TOKEN` | the enrollment token, for the first start |
+| `KAPELO_NAME` | the name shown in Kapelo (default: the container's host name) |
+| `KAPELO_SERVER` | Kapelo's endpoint (default `agent.kapelo.app:443`) |
+| `KAPELO_POSTGRES` | `off` for no database |
+| `KAPELO_DATA` | the data folder (default `/data`) |
 
-Any OpenAI compatible API works (OpenRouter, OpenAI, DeepSeek, Ollama, a gateway of your own), and Anthropic's. `init` asks for what it needs:
+## The worker on its own
+
+`kapelo-sandbox worker` gives one task to a model through [OpenCode](https://opencode.ai) on a branch of its own, commits, and checks the result: only the allowed files changed, tests left alone, the project's build, typecheck, lint and tests pass. When an attempt fails, it tries again with the failing check in hand, then with a stronger model. It needs `git` and `opencode` on `PATH`; the image `ghcr.io/elchi-dev/kapelo-worker` has both.
 
 ```sh
-kapelo-worker init
-```
-
-or takes it all as flags:
-
-```sh
-kapelo-worker init -provider openrouter -key-env OPENROUTER_API_KEY \
+kapelo-sandbox worker init -provider openrouter -key-env OPENROUTER_API_KEY \
   -model deepseek/deepseek-v4.1-flash -escalate z-ai/glm-5.3
 
-kapelo-worker init -provider anthropic -key-env ANTHROPIC_API_KEY -model claude-haiku-5-5
-
-kapelo-worker init -provider local -base-url http://localhost:11434/v1 -kind openai-compatible -model qwen3-coder
-
-kapelo-worker init -provider company -base-url https://llm.example.com/v1 -kind openai-compatible \
-  -key-env COMPANY_LLM_KEY -model coder-large
-```
-
-The configuration lives in `kapelo-worker/config.json` in your user configuration folder (or wherever `KAPELO_WORKER_CONFIG` points), readable by you only. Keys stay in the environment variable you name; `-key-env` is the name, not the key. Addresses must be https, except on your own machine.
-
-## Run a task
-
-In a git repository with nothing uncommitted:
-
-```sh
-kapelo-worker run -goal "Add a GET /api/health route that answers {\"ok\": true}" \
+kapelo-sandbox worker run -goal "Add a GET /api/health route that answers {\"ok\": true}" \
   -files "src/app/api/health/**" -criteria "answers 200;answers JSON"
 ```
 
-The work ends up on `task/<id>`, made from the branch you were on. `-merge` merges it back when the task is done. The exit code is 0 when the task is done and 1 when it is not; every attempt prints a report line, and `-report out.json` keeps the last one.
+Any OpenAI compatible API works (OpenRouter, OpenAI, DeepSeek, Ollama, a gateway of your own), and Anthropic's:
+
+```sh
+kapelo-sandbox worker init -provider anthropic -key-env ANTHROPIC_API_KEY -model claude-haiku-5-5
+kapelo-sandbox worker init -provider local -base-url http://localhost:11434/v1 -kind openai-compatible -model qwen3-coder
+kapelo-sandbox worker init -provider company -base-url https://llm.example.com/v1 -kind openai-compatible \
+  -key-env COMPANY_LLM_KEY -model coder-large
+```
+
+The configuration lives in `kapelo-worker/config.json` in your user configuration folder (or `KAPELO_WORKER_CONFIG`), readable by you only; keys stay in the environment variable you name. Addresses must be https, except on your own machine.
+
+`run` works in a git repository with nothing uncommitted. The work ends up on `task/<id>`, made from the branch you were on; `-merge` merges it back when the task is done. The exit code is 0 when the task is done and 1 when it is not; every attempt prints a `KAPELO_REPORT {...}` line, and `-report out.json` keeps the last one.
 
 | Flag | |
 |---|---|
 | `-goal`, `-title`, `-type` | What to do; `-type` is `impl` (default), `impl_hard`, `frontend` or `test` |
 | `-files` | Files or patterns the task may change, comma separated; `**` spans folders |
 | `-criteria`, `-notes` | Acceptance criteria and notes, separated by `;` |
-| `-task task.json` | All of the above as JSON, in the format below |
-| `-stack` | A shipped stack by name (`kapelo-worker stacks`) or a folder with `stack.json` |
+| `-task task.json` | All of the above as JSON (the `task.Brief` type) |
+| `-stack` | A shipped stack by name (`worker stacks`) or a folder with `stack.json` |
 | `-provider`, `-model`, `-escalate` | Override the configured provider and models |
-| `-attempts` | 1 to 3 steps of the ladder |
+| `-attempts` | 1 to 3 steps: the model, the model again with the failure, the stronger model |
 | `-base`, `-id`, `-resume`, `-merge` | Branches: start from, name, continue, merge back |
 
-A test task writes tests against behaviour that may not exist yet; every other type changes the implementation and treats the stack's test files as read only.
-
-## In a container
-
-The image carries the worker, OpenCode, git, Node.js and PostgreSQL, and runs as uid 1000:
+In a container, as your own user so the files stay yours:
 
 ```sh
-docker run --rm -v "$PWD:/work" -v "$HOME/.config/kapelo-worker:/config:ro" \
-  -e KAPELO_WORKER_CONFIG=/config/config.json -e OPENROUTER_API_KEY \
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" \
+  -v "$HOME/.config/kapelo-worker:/config:ro" -e KAPELO_WORKER_CONFIG=/config/config.json -e OPENROUTER_API_KEY \
   ghcr.io/elchi-dev/kapelo-worker run -goal "..." -files "src/**"
 ```
 
-The model runs shell commands in the repository. Running it in a container keeps those commands away from the rest of your machine.
+### Stacks
 
-## Stacks
-
-A stack is a folder with `stack.json`:
+A stack is a folder with `stack.json`: the rules the model reads with every task, which files are tests, and the checks:
 
 ```json
 {
@@ -111,31 +120,19 @@ A stack is a folder with `stack.json`:
 }
 ```
 
-`rules` is a Markdown file the model reads with every task. `database: postgres` starts a throwaway PostgreSQL for the checks on `127.0.0.1:54329` (`KAPELO_PG_PORT`) and sets `DATABASE_URL`, unless it is set already. `setup`, `final` and `line_exts` are used by tools that scaffold and review whole projects. Point `-stack` at the folder, or put stacks into the folder `KAPELO_STACKS` names.
+`database: postgres` starts a throwaway PostgreSQL for the checks on `127.0.0.1:54329` (`KAPELO_PG_PORT`) unless `DATABASE_URL` is set. Shipped: `next-drizzle` (Next.js, TypeScript, Tailwind, Drizzle on PostgreSQL, Vitest).
 
-Shipped: `next-drizzle` (Next.js, TypeScript, Tailwind, Drizzle on PostgreSQL, Vitest).
+## Releases
 
-## From a scheduler of your own
+Binaries for Linux and macOS are on the [releases](https://github.com/Elchi-dev/kapelo-sandbox/releases) page with `SHA256SUMS` signed through Sigstore, and both images are signed the same way:
 
-Without a command, the worker runs one attempt of the task in `KAPELO_TASK` against the API at `KAPELO_LLM_BASE`, in the clone at `/work` (`KAPELO_WORKDIR`). It never picks a model or a branch itself; whatever starts it decides. It ends with one line:
-
-```
-KAPELO_REPORT {"status":"done","model":"m","attempt":1,"summary":"...","gates":{"scope":true,"build":true}}
-```
-
-`status` is `done`, `failed` or `blocked`. `summary` and `blockers` are short, for whoever plans the work; `failure` is the failing check's output, to hand to the next attempt as `previous_failure`. The exit code is 0 once the report is written; anything else means the worker itself broke. The brief:
-
-```json
-{
-  "task": 12, "title": "Health route", "type": "impl",
-  "goal": "Add GET /api/health", "acceptance_criteria": ["answers 200"],
-  "allowed_files": ["src/app/api/health/**"], "notes": [], "decisions": [],
-  "attempt": 1, "model": "deepseek/deepseek-v4.1-flash", "models": ["deepseek/deepseek-v4.1-flash"],
-  "stack": "next-drizzle", "test_budget": 0, "previous_failure": ""
-}
+```sh
+cosign verify ghcr.io/elchi-dev/kapelo-sandbox:latest \
+  --certificate-identity-regexp '^https://github.com/Elchi-dev/kapelo-sandbox/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-The packages are usable from Go as well: `task` (brief and report), `worker` (one attempt), `gates`, `harness`, `gitrepo`, `provider` and `stacks`.
+The Go packages are usable on their own: `protocol` (the signed commands and the tools' messages), `link`, `sandbox`, `worker`, `gates`, `harness`, `gitrepo`, `provider`, `pgdev`, `stacks` and `task`.
 
 ## Licence
 

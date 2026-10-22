@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Elchi-dev/kapelo-worker/gitrepo"
-	"github.com/Elchi-dev/kapelo-worker/stacks"
+	"github.com/Elchi-dev/kapelo-sandbox/gitrepo"
+	"github.com/Elchi-dev/kapelo-sandbox/stacks"
 )
 
 type Command struct {

@@ -23,8 +23,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -t kapelo-worker:ci .
-      - name: The tools are there and it runs as uid 1000
+      - run: docker build -t kapelo-sandbox:ci . && docker build --target worker -t kapelo-worker:ci .
+      - name: The tools are there and both run as uid 1000
         run: |
-          docker run --rm kapelo-worker:ci version
+          docker run --rm kapelo-sandbox:ci version
+          docker run --rm --entrypoint sh kapelo-sandbox:ci -c 'git --version && node --version && python3 --version && rg --version && pg_ctl --version && test "$(id -u)" = 1000'
           docker run --rm --entrypoint sh kapelo-worker:ci -c 'opencode --version && pg_ctl --version && test "$(id -u)" = 1000'
+      - name: The sandbox refuses to start without enrollment
+        run: |
+          out=$(docker run --rm kapelo-sandbox:ci 2>&1 || true)
+          echo "$out" | grep -q "not enrolled"

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Elchi-dev/kapelo-worker/provider"
+	"github.com/Elchi-dev/kapelo-sandbox/provider"
 )
 
 type Card struct {

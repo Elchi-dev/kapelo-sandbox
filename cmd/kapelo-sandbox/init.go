@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Elchi-dev/kapelo-worker/provider"
+	"github.com/Elchi-dev/kapelo-sandbox/provider"
 )
 
 // initCmd sets up a provider. Every flag that is missing is asked for;
@@ -104,7 +104,7 @@ func initCmd(e env, args []string) error {
 	}
 	fmt.Fprintf(e.out, "Saved provider %s in %s.\n", *name, path)
 	if p.APIKeyEnv != "" && e.getenv(p.APIKeyEnv) == "" {
-		fmt.Fprintf(e.out, "Set %s before kapelo-worker run.\n", p.APIKeyEnv)
+		fmt.Fprintf(e.out, "Set %s before kapelo-sandbox worker run.\n", p.APIKeyEnv)
 	}
 	return nil
 }

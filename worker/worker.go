@@ -4,20 +4,17 @@
 package worker
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"os/user"
 	"path/filepath"
 	"strings"
 
-	"github.com/Elchi-dev/kapelo-worker/gates"
-	"github.com/Elchi-dev/kapelo-worker/gitrepo"
-	"github.com/Elchi-dev/kapelo-worker/harness"
-	"github.com/Elchi-dev/kapelo-worker/task"
+	"github.com/Elchi-dev/kapelo-sandbox/gates"
+	"github.com/Elchi-dev/kapelo-sandbox/gitrepo"
+	"github.com/Elchi-dev/kapelo-sandbox/harness"
+	"github.com/Elchi-dev/kapelo-sandbox/task"
 )
 
 type Options struct {
@@ -126,95 +123,4 @@ func excludeUntracked(r gitrepo.Repo) error {
 	}
 	_, err = f.WriteString(b.String())
 	return err
-}
-
-// Postgres starts a throwaway database for the checks: data in a new
-// temporary folder, reachable on loopback only, user and password app.
-// Stop removes it again.
-type Postgres struct {
-	URL  string
-	root string // the temporary folder: data, log, socket, passwd
-	env  []string
-}
-
-func StartPostgres(ctx context.Context, port string) (*Postgres, error) {
-	if _, err := exec.LookPath("pg_ctl"); err != nil {
-		return nil, errors.New("the checks need PostgreSQL: install it (pg_ctl on PATH) or set DATABASE_URL")
-	}
-	root, err := os.MkdirTemp("", "kapelo-pg-")
-	if err != nil {
-		return nil, err
-	}
-	data := filepath.Join(root, "data")
-	p := &Postgres{root: root}
-	env, err := passwdFor(root)
-	if err != nil {
-		os.RemoveAll(root)
-		return nil, err
-	}
-	run := func(name string, args ...string) error {
-		cmd := exec.CommandContext(ctx, name, args...)
-		cmd.Env = append(os.Environ(), env...)
-		var out bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &out
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("%s: %w: %s", name, err, gates.Tail(out.String(), 1000))
-		}
-		return nil
-	}
-	p.env = env
-	if err := run("initdb", "-D", data, "-U", "app", "--auth=trust", "-E", "UTF8", "--no-instructions"); err != nil {
-		os.RemoveAll(root)
-		return nil, err
-	}
-	if err := run("pg_ctl", "-D", data, "-w", "-l", filepath.Join(root, "log"), "-o", "-h 127.0.0.1 -p "+port+" -k "+root+" -F", "start"); err != nil {
-		os.RemoveAll(root)
-		return nil, err
-	}
-	if err := run("createdb", "-h", "127.0.0.1", "-p", port, "-U", "app", "app"); err != nil {
-		p.Stop()
-		return nil, err
-	}
-	p.URL = "postgres://app:app@127.0.0.1:" + port + "/app"
-	return p, nil
-}
-
-func (p *Postgres) Stop() {
-	cmd := exec.Command("pg_ctl", "-D", filepath.Join(p.root, "data"), "-m", "fast", "stop")
-	cmd.Env = append(os.Environ(), p.env...)
-	_ = cmd.Run()
-	os.RemoveAll(p.root)
-}
-
-// nssWrapper is where Debian's libnss-wrapper lives; the worker image has
-// it.
-var nssWrapper = []string{"/usr/lib/x86_64-linux-gnu/libnss_wrapper.so", "/usr/lib/aarch64-linux-gnu/libnss_wrapper.so"}
-
-// passwdFor lets PostgreSQL run as a user id without an /etc/passwd
-// entry, as in a container started with --user to match the owner of a
-// mounted repository: initdb refuses such a user. nss_wrapper hands the
-// PostgreSQL programs a passwd file with that id in it.
-func passwdFor(dir string) ([]string, error) {
-	if _, err := user.Current(); err == nil {
-		return nil, nil
-	}
-	lib := ""
-	for _, l := range nssWrapper {
-		if _, err := os.Stat(l); err == nil {
-			lib = l
-		}
-	}
-	if lib == "" {
-		return nil, fmt.Errorf("user id %d has no passwd entry, which PostgreSQL needs; run as a known user or set DATABASE_URL", os.Getuid())
-	}
-	uid, gid := os.Getuid(), os.Getgid()
-	passwd := filepath.Join(dir, "passwd")
-	group := filepath.Join(dir, "group")
-	if err := os.WriteFile(passwd, []byte(fmt.Sprintf("worker:x:%d:%d:worker:%s:/bin/sh\n", uid, gid, os.TempDir())), 0o644); err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(group, []byte(fmt.Sprintf("worker:x:%d:\n", gid)), 0o644); err != nil {
-		return nil, err
-	}
-	return []string{"LD_PRELOAD=" + lib, "NSS_WRAPPER_PASSWD=" + passwd, "NSS_WRAPPER_GROUP=" + group}, nil
 }
